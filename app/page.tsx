@@ -142,6 +142,12 @@ export default function Home() {
     navigator.clipboard.writeText(payload);
   }
 
+  function handleResultChange(index: number, field: "vehicle" | "name" | "mobile", value: string) {
+    const updated = [...results];
+    updated[index] = { ...updated[index], [field]: value };
+    setResults(updated);
+  }
+
   return (
     <main style={{ padding: 24, fontFamily: "Inter, Roboto, sans-serif" }}>
       <h1 style={{ marginBottom: 12 }}>Driver Name Updater — Paste text to parse</h1>
@@ -175,7 +181,7 @@ export default function Home() {
         </div>
       </form>
 
-           <section style={{ marginTop: 20 }}>
+      <section style={{ marginTop: 20 }}>
         <h2>Results</h2>
         {results.length === 0 ? (
           <p style={{ color: "#666" }}>No results yet — paste text and press Parse.</p>
@@ -241,9 +247,48 @@ export default function Home() {
               <tbody>
                 {results.map((r, i) => (
                   <tr key={i}>
-                    <td style={{ padding: 8, borderBottom: "1px solid #f2f2f2" }}>{r.vehicle}</td>
-                    <td style={{ padding: 8, borderBottom: "1px solid #f2f2f2" }}>{r.name}</td>
-                    <td style={{ padding: 8, borderBottom: "1px solid #f2f2f2" }}>{r.mobile}</td>
+                    <td style={{ padding: 8, borderBottom: "1px solid #f2f2f2" }}>
+                      <input
+                        type="text"
+                        value={r.vehicle}
+                        onChange={(e) => handleResultChange(i, "vehicle", e.target.value)}
+                        style={{
+                          width: "100%",
+                          border: "1px solid #ccc",
+                          padding: 4,
+                          fontSize: 14,
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </td>
+                    <td style={{ padding: 8, borderBottom: "1px solid #f2f2f2" }}>
+                      <input
+                        type="text"
+                        value={r.name}
+                        onChange={(e) => handleResultChange(i, "name", e.target.value)}
+                        style={{
+                          width: "100%",
+                          border: "1px solid #ccc",
+                          padding: 4,
+                          fontSize: 14,
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </td>
+                    <td style={{ padding: 8, borderBottom: "1px solid #f2f2f2" }}>
+                      <input
+                        type="text"
+                        value={r.mobile}
+                        onChange={(e) => handleResultChange(i, "mobile", e.target.value)}
+                        style={{
+                          width: "100%",
+                          border: "1px solid #ccc",
+                          padding: 4,
+                          fontSize: 14,
+                          boxSizing: "border-box",
+                        }}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
