@@ -6,135 +6,37 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [results, setResults] = useState<Array<any>>([]);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
+  const [todayDate, setTodayDate] = useState<string>("");
+  const [isLoading, setIsLoading] = useState(false);
 
-  function parseText(text: string) {
-    const lines = text.split(/\r?\n/).map((l) => l.trim());
-
-    const nameLineRe = /(?:Maa:\s*Name|Maa:|Name)\s*[:\-]?\s*(.+)/i;
-    const mobileRe = /(\d{10})/;
-    const vehicleRe = /([A-Z]{1,2}\s*\d{1,2}[A-Z]{0,2}\s*\d{3,4})/i;
-    const clientRe = /\b(DTDC|Apex|Durgapuri|Durgapur)\b/i;
-
-    const resultsArr: Array<any> = [];
-
-    let current: any = { name: null, mobile: null, vehicle: null, client: null, raw: [] };
-
-    function pushCurrentIfAny() {
-      if (current.raw.length === 0) return;
-      // only push if we have at least one identifying field
-      if (!(current.name || current.mobile || current.vehicle)) {
-        // discard entries that only contain e.g. a stray client line
-        current = { name: null, mobile: null, vehicle: null, client: null, raw: [] };
-        return;
-      }
-      resultsArr.push({
-        name: current.name || null,
-        mobile: current.mobile || null,
-        vehicle: current.vehicle || null,
-        client: current.client || null,
-        raw: current.raw.join(" \n "),
-      });
-      current = { name: null, mobile: null, vehicle: null, client: null, raw: [] };
-    }
-
-    for (const rawLine of lines) {
-      const line = rawLine.trim();
-      if (!line) {
-        // blank line separates entries
-        pushCurrentIfAny();
-        continue;
-      }
-
-      // If a new Name line appears and current already has data, start a new record
-      const nameLineMatch = line.match(nameLineRe);
-      if (nameLineMatch) {
-        if (current.raw.length && (current.name || current.mobile || current.vehicle)) {
-          pushCurrentIfAny();
-        }
-        current.name = nameLineMatch[1].trim();
-        current.raw.push(line);
-        continue;
-      }
-
-      // Mobile
-      const mm = line.match(mobileRe);
-      if (mm) {
-        if (!current.mobile) current.mobile = mm[1];
-        current.raw.push(line);
-        continue;
-      }
-
-      // Vehicle
-      const vm = line.match(vehicleRe);
-      if (vm) {
-        if (!current.vehicle) current.vehicle = vm[1].replace(/\s+/g, "").toUpperCase();
-        current.raw.push(line);
-        // if vehicle line likely ends the entry, push
-        if (current.name || current.mobile || current.vehicle) {
-          pushCurrentIfAny();
-        }
-        continue;
-      }
-
-      // Client
-      const cm = line.match(clientRe);
-      if (cm) {
-        // if no current data but we already have a previous result, attach client to it
-        if (!current.raw.length && resultsArr.length) {
-          const last = resultsArr[resultsArr.length - 1];
-          if (!last.client) last.client = cm[1];
-        } else {
-          if (!current.client) current.client = cm[1];
-          current.raw.push(line);
-        }
-        continue;
-      }
-
-      // generic heuristics: lines starting with 'Mob' or 'Mobile' or 'Vehicle' or 'Name -'
-      if (/^Mob|Mobile|Mobile no|Mob no|Mob\s+no/i.test(line)) {
-        const m = line.match(/(\d{10})/);
-        if (m && !current.mobile) current.mobile = m[1];
-        current.raw.push(line);
-        continue;
-      }
-
-      if (/^Vehicle|^Vehicle no|Vehicle no\.|Vehicle no -/i.test(line)) {
-        const m = line.match(/([A-Z0-9\-\s]{6,12})/i);
-        if (m && !current.vehicle) current.vehicle = m[1].replace(/[^A-Z0-9]/gi, "").toUpperCase();
-        current.raw.push(line);
-        pushCurrentIfAny();
-        continue;
-      }
-
-      // otherwise attach to current raw; if line contains 'Name -' inside, try extract
-      const inlineName = line.match(/Name\s*[:\-]?\s*(.+)/i);
-      if (inlineName) {
-        if (current.raw.length && (current.name || current.mobile || current.vehicle)) {
-          pushCurrentIfAny();
-        }
-        current.name = inlineName[1].trim();
-        current.raw.push(line);
-        continue;
-      }
-
-      // fallback: attach any other text
-      current.raw.push(line);
-    }
-
-    pushCurrentIfAny();
-
-    const mapped = resultsArr.map((r) => ({
-      vehicle: r.vehicle || "(unknown)",
-      name: r.name || "(unknown)",
-      mobile: r.mobile || "(unknown)",
-    }));
-
-    setResults(mapped);
-  }
-
-  function handleSubmit(e?: any) {
+  async function handleSubmit(e?: any) {
     if (e && e.preventDefault) e.preventDefault();
-    parseText(input);
+    
+    if (!input.trim()) {
+      setUpdateStatus("Please paste some text first");
+      return;
+    }
+
+    setIsLoading(true);
+    setUpdateStatus("Parsing with Gemini...");
+
+    try {
+      const res = await fetch("/api/parse", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: input }),
+      });
+
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to parse");
+
+      setResults(json.data);
+      setUpdateStatus(null);
+    } catch (err: any) {
+      setUpdateStatus(`Error: ${err.message || err}`);
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   function copyJSON() {
@@ -142,10 +44,278 @@ export default function Home() {
     navigator.clipboard.writeText(payload);
   }
 
-  function handleResultChange(index: number, field: "vehicle" | "name" | "mobile", value: string) {
+  function handleResultChange(index: number, field: string, value: string) {
     const updated = [...results];
     updated[index] = { ...updated[index], [field]: value };
     setResults(updated);
+  }
+
+  function addRow() {
+    setResults([
+      ...results,
+      { vehicle: "", name: "", mobile: "", client: "" },
+    ]);
+  }
+
+  function removeRow(index: number) {
+    setResults(results.filter((_, i) => i !== index));
+  }
+
+  async function startDay() {
+    setUpdateStatus(null);
+
+    const dateColumnName = "Date";
+    const vehicleColumnName = "Vehicle No";
+    const locationColumnName = "Hub";
+    const serialNumberColumnName = "S.No";
+    const clientColumnName = "Client";
+    const driverNameColumnName = "Driver";
+    const phoneColumnName = "Mobile Number";
+
+    const today = new Date();
+    const dateString = `${String(today.getDate()).padStart(2, "0")}/${String(today.getMonth() + 1).padStart(2, "0")}/${today.getFullYear()}`;
+    setTodayDate(dateString);
+
+    // All 178 vehicle entries
+    const vehicleData = [
+      { vehicle: "DL51EV1698", location: "Kundli" },
+      { vehicle: "DL51EV5025", location: "Kundli" },
+      { vehicle: "DL51EV6807", location: "Kundli" },
+      { vehicle: "DL51EV6853", location: "Kundli" },
+      { vehicle: "DL51EV7432", location: "Kundli" },
+      { vehicle: "DL51EV7488", location: "Kundli" },
+      { vehicle: "DL51EV7631", location: "Kundli" },
+      { vehicle: "DL51EV7700", location: "Kundli" },
+      { vehicle: "HR55AV0543", location: "Kundli" },
+      { vehicle: "HR55AT0695", location: "Kundli" },
+      { vehicle: "HR55AT1214", location: "Kundli" },
+      { vehicle: "HR55AV1402", location: "Kundli" },
+      { vehicle: "HR55AV1658", location: "Kundli" },
+      { vehicle: "HR55AV2299", location: "Kundli" },
+      { vehicle: "HR55AV2832", location: "Kundli" },
+      { vehicle: "HR55AV2829", location: "Kundli" },
+      { vehicle: "HR55AV3320", location: "Kundli" },
+      { vehicle: "HR55AV3905", location: "Kundli" },
+      { vehicle: "HR55AT5076", location: "Kundli" },
+      { vehicle: "HR55AV5746", location: "Kundli" },
+      { vehicle: "HR55AT7014", location: "Kundli" },
+      { vehicle: "HR55AV7268", location: "Kundli" },
+      { vehicle: "DL51EV7414", location: "Kundli" },
+      { vehicle: "HR55AT9175", location: "Kundli" },
+      { vehicle: "HR55AT9908", location: "Kundli" },
+      { vehicle: "HR55AT1791", location: "Kundli" },
+      { vehicle: "HR55AV1823", location: "Narela" },
+      { vehicle: "HR55AV4277", location: "Kundli" },
+      { vehicle: "HR55AV7999", location: "Kundli" },
+      { vehicle: "DL51EV6248", location: "Kundli" },
+      { vehicle: "HR55AV1576", location: "Kundli" },
+      { vehicle: "HR55AV8592", location: "Narela" },
+      { vehicle: "HR55AT9494", location: "Kundli" },
+      { vehicle: "HR55AV2369", location: "Faridabad" },
+      { vehicle: "DL51EV1617", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV1683", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV1642", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV5018", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV5023", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV6146", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV6806", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV6892", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV7305", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV7337", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV7346", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV7455", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV7461", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV7469", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV7479", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV7492", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV7493", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV7517", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV7535", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV7555", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV7877", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV8209", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV0341", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV0325", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AT0624", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV0944", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV1253", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AT1450", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AT2553", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV2597", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV2620", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV3418", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV4239", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AT4767", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV4987", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV5476", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AT5528", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV6079", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV6295", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AT6827", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AT6874", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AT6947", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV7042", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV7479", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV7633", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AT8219", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV8663", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV8684", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV8765", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AT8781", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV8805", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV8866", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV9026", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV9243", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV9355", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV9490", location: "Sec 24 Dwarka" },
+      { vehicle: "HR55AV9560", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51EV1562", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1635", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1641", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1643", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1652", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1675", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1802", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1818", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1819", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1824", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1830", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1841", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1878", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1888", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV1952", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV2004", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV4145", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV4147", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV4156", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV4160", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV4166", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV6150", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV6298", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV6802", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV6933", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV6977", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7320", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7411", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7415", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7418", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7421", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7447", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7458", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7462", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7477", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7495", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7497", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7522", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7565", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7673", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7695", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7690", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7881", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7886", location: "Waniz" },
+      { vehicle: "DL51EV8064", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD8245", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD8257", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV8421", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV8477", location: "Sec 18 Gurgaon" },
+      { vehicle: "HR55AT0845", location: "Sec 18 Gurgaon" },
+      { vehicle: "HR55AV2803", location: "Sec 18 Gurgaon" },
+      { vehicle: "HR55AV3721", location: "Sec 18 Gurgaon" },
+      { vehicle: "HR55AT4434", location: "Sec 18 Gurgaon" },
+      { vehicle: "HR55AV4478", location: "Sec 18 Gurgaon" },
+      { vehicle: "HR55AV5757", location: "Sec 18 Gurgaon" },
+      { vehicle: "HR55AV7319", location: "Sec 18 Gurgaon" },
+      { vehicle: "HR55AV7347", location: "Sec 18 Gurgaon" },
+      { vehicle: "HR55AV9118", location: "Sec 18 Gurgaon" },
+      { vehicle: "HR55AT9879", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD6026", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD6684", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51EV7873", location: "Waniz" },
+      { vehicle: "DL51EV5047", location: "Waniz" },
+      { vehicle: "DL51EV5069", location: "Waniz" },
+      { vehicle: "DL51EV6948", location: "Waniz" },
+      { vehicle: "DL51EV6109", location: "Waniz" },
+      { vehicle: "DL51EV7472", location: "YU" },
+      { vehicle: "HR55AV0493", location: "Gracious Logistics" },
+      { vehicle: "DL51GD3312", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD3315", location: "Workshop" },
+      { vehicle: "DL51GD3323", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51GD3325", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51GD3342", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51GD3364", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD3380", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51GD3383", location: "Sec 24 Dwarka" },
+      { vehicle: "DL51GD3392", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD3454", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD6063", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD6083", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD6602", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD6605", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD6621", location: "Workshop" },
+      { vehicle: "DL51GD6647", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD6696", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD6041", location: "Sec 18 Gurgaon" },
+      { vehicle: "DL51GD6639", location: "Sec 18 Gurgaon" },
+    ];
+
+    setUpdateStatus("Starting day...");
+    try {
+      const res = await fetch("/api/start-day", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dateColumnName,
+          vehicleColumnName,
+          locationColumnName,
+          serialNumberColumnName,
+          clientColumnName,
+          driverNameColumnName,
+          phoneColumnName,
+          date: dateString,
+          vehicles: vehicleData,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || JSON.stringify(json));
+      setUpdateStatus(`Started day: ${json.inserted || 0} entries added`);
+    } catch (err: any) {
+      setUpdateStatus(`Error: ${err.message || err}`);
+    }
+  }
+
+  async function updateTodayDrivers() {
+    setUpdateStatus(null);
+
+    const entries = results
+      .filter((r) => r.vehicle && r.vehicle !== "(unknown)" && r.vehicle.length > 0)
+      .map((r) => ({
+        vehicle: r.vehicle,
+        name: r.name || "",
+        mobile: r.mobile || "",
+        client: r.client || "",
+      }));
+
+    if (entries.length === 0) {
+      setUpdateStatus("No valid vehicle entries to update.");
+      return;
+    }
+
+    setUpdateStatus("Updating today's drivers...");
+    try {
+      const res = await fetch("/api/update-today", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          entries,
+          date: todayDate,
+        }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || JSON.stringify(json));
+      setUpdateStatus(`Updated ${json.updated || 0} entries for today`);
+    } catch (err: any) {
+      setUpdateStatus(`Error: ${err.message || err}`);
+    }
   }
 
   return (
@@ -162,20 +332,16 @@ export default function Home() {
         />
 
         <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-          <button type="submit" style={{ padding: "8px 12px" }}>
-            Parse
+          <button type="submit" disabled={isLoading} style={{ padding: "8px 12px", cursor: "pointer", opacity: isLoading ? 0.6 : 1 }}>
+            {isLoading ? "Parsing..." : "Parse"}
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setInput("");
-              setResults([]);
-            }}
-            style={{ padding: "8px 12px" }}
-          >
+          <button type="button" onClick={startDay} style={{ padding: "8px 12px", backgroundColor: "#28a745", color: "white", cursor: "pointer" }}>
+            Start the Day
+          </button>
+          <button type="button" onClick={() => { setInput(""); setResults([]); }} style={{ padding: "8px 12px", cursor: "pointer" }}>
             Clear
           </button>
-          <button type="button" onClick={copyJSON} style={{ padding: "8px 12px" }}>
+          <button type="button" onClick={copyJSON} disabled={results.length === 0} style={{ padding: "8px 12px", cursor: "pointer", opacity: results.length === 0 ? 0.6 : 1 }}>
             Copy JSON
           </button>
         </div>
@@ -187,46 +353,23 @@ export default function Home() {
           <p style={{ color: "#666" }}>No results yet — paste text and press Parse.</p>
         ) : (
           <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: 12 }}>
               <div>
                 <button
                   type="button"
-                  onClick={async () => {
-                    setUpdateStatus(null);
-                    const entries = results
-                      .filter((r) => r.vehicle && r.vehicle !== "(unknown)")
-                      .map((r) => ({ vehicle: r.vehicle, name: r.name, mobile: r.mobile }));
-                    if (entries.length === 0) {
-                      setUpdateStatus("No valid vehicle entries to update.");
-                      return;
-                    }
-                    setUpdateStatus("Updating...");
-                    try {
-                      const res = await fetch("/api/update", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ entries }),
-                      });
-                      const json = await res.json();
-                      if (!res.ok) throw new Error(json.error || JSON.stringify(json));
-                      setUpdateStatus(`Updated ${json.updated || 0} entries`);
-                    } catch (err: any) {
-                      setUpdateStatus(`Error: ${err.message || err}`);
-                    }
-                  }}
-                  style={{ padding: "8px 12px", marginRight: 8 }}
+                  onClick={updateTodayDrivers}
+                  style={{ padding: "8px 12px", marginRight: 8, cursor: "pointer", backgroundColor: "#0056b3", color: "white" }}
                 >
-                  Update Google Sheet
+                  Update Today's Drivers
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setInput("");
-                    setResults([]);
-                    setUpdateStatus(null);
-                  }}
-                  style={{ padding: "8px 12px" }}
+                  onClick={addRow}
+                  style={{ padding: "8px 12px", marginRight: 8, cursor: "pointer", backgroundColor: "#17a2b8", color: "white" }}
                 >
+                  + Add Row
+                </button>
+                <button type="button" onClick={() => { setInput(""); setResults([]); setUpdateStatus(null); }} style={{ padding: "8px 12px", cursor: "pointer" }}>
                   Clear
                 </button>
               </div>
@@ -240,54 +383,35 @@ export default function Home() {
               <thead>
                 <tr>
                   <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Vehicle</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Name</th>
-                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Mobile</th>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Driver Name</th>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Phone</th>
+                  <th style={{ textAlign: "left", borderBottom: "1px solid #ddd", padding: 8 }}>Client</th>
+                  <th style={{ textAlign: "center", borderBottom: "1px solid #ddd", padding: 8, width: 60 }}>Action</th>
                 </tr>
               </thead>
               <tbody>
                 {results.map((r, i) => (
                   <tr key={i}>
                     <td style={{ padding: 8, borderBottom: "1px solid #f2f2f2" }}>
-                      <input
-                        type="text"
-                        value={r.vehicle}
-                        onChange={(e) => handleResultChange(i, "vehicle", e.target.value)}
-                        style={{
-                          width: "100%",
-                          border: "1px solid #ccc",
-                          padding: 4,
-                          fontSize: 14,
-                          boxSizing: "border-box",
-                        }}
-                      />
+                      <input type="text" value={r.vehicle} onChange={(e) => handleResultChange(i, "vehicle", e.target.value)} style={{ width: "100%", border: "1px solid #ccc", padding: 4, fontSize: 14, boxSizing: "border-box", cursor: "text" }} />
                     </td>
                     <td style={{ padding: 8, borderBottom: "1px solid #f2f2f2" }}>
-                      <input
-                        type="text"
-                        value={r.name}
-                        onChange={(e) => handleResultChange(i, "name", e.target.value)}
-                        style={{
-                          width: "100%",
-                          border: "1px solid #ccc",
-                          padding: 4,
-                          fontSize: 14,
-                          boxSizing: "border-box",
-                        }}
-                      />
+                      <input type="text" value={r.name} onChange={(e) => handleResultChange(i, "name", e.target.value)} style={{ width: "100%", border: "1px solid #ccc", padding: 4, fontSize: 14, boxSizing: "border-box", cursor: "text" }} />
                     </td>
                     <td style={{ padding: 8, borderBottom: "1px solid #f2f2f2" }}>
-                      <input
-                        type="text"
-                        value={r.mobile}
-                        onChange={(e) => handleResultChange(i, "mobile", e.target.value)}
-                        style={{
-                          width: "100%",
-                          border: "1px solid #ccc",
-                          padding: 4,
-                          fontSize: 14,
-                          boxSizing: "border-box",
-                        }}
-                      />
+                      <input type="text" value={r.mobile} onChange={(e) => handleResultChange(i, "mobile", e.target.value)} style={{ width: "100%", border: "1px solid #ccc", padding: 4, fontSize: 14, boxSizing: "border-box", cursor: "text" }} />
+                    </td>
+                    <td style={{ padding: 8, borderBottom: "1px solid #f2f2f2" }}>
+                      <input type="text" value={r.client} onChange={(e) => handleResultChange(i, "client", e.target.value)} style={{ width: "100%", border: "1px solid #ccc", padding: 4, fontSize: 14, boxSizing: "border-box", cursor: "text" }} />
+                    </td>
+                    <td style={{ padding: 8, borderBottom: "1px solid #f2f2f2", textAlign: "center" }}>
+                      <button
+                        type="button"
+                        onClick={() => removeRow(i)}
+                        style={{ padding: "4px 8px", backgroundColor: "#dc3545", color: "white", border: "none", borderRadius: "3px", cursor: "pointer", fontSize: 12 }}
+                      >
+                        Remove
+                      </button>
                     </td>
                   </tr>
                 ))}
